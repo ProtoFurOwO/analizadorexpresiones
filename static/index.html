@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de Rostros</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-200 p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        
+        <div class="bg-white rounded-lg shadow-md mb-6 overflow-hidden">
+            <div class="bg-blue-600 p-4 flex gap-4">
+                <input type="text" id="queryInput" placeholder='Ej: FIND faces WHERE age > 25 AND emotion = "happy"' 
+                       class="flex-1 p-3 rounded text-gray-800 font-mono text-sm focus:outline-none shadow-inner">
+                <button onclick="validarConsulta()" class="bg-blue-500 hover:bg-blue-400 text-white font-bold py-2 px-8 rounded shadow border border-blue-400 transition-colors">
+                    Validar consulta
+                </button>
+            </div>
+
+<div class="p-4 border-b">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+                    <div>
+                        <p class="text-gray-700 font-semibold mb-1">Sube fotos o usa tu cámara:</p>
+                        <div>
+                        <p class="text-gray-700 font-semibold mb-1">Sube fotos o usa tu cámara:</p>
+                        <div class="flex gap-2 items-center">
+                            <input type="file" id="fileInput" multiple onchange="acumularArchivos(event)" class="border p-2 rounded bg-gray-50 hover:bg-gray-100 cursor-pointer text-sm" accept="image/*">
+                            
+                            <button onclick="limpiarCola()" class="text-red-500 hover:text-red-700 text-sm font-bold px-2" title="Vaciar fotos seleccionadas">
+                                🗑️ Limpiar
+                            </button>
+                        </div>
+                    </div>
+                    </div>
+                    <button onclick="abrirCamara()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-4 rounded shadow transition-colors flex items-center gap-2">
+                        📷 Abrir Cámara
+                    </button>
+                </div>
+                
+                <div id="camaraContainer" class="hidden mb-4 p-4 border rounded bg-gray-800 flex flex-col items-center">
+                    <video id="videoWebcam" autoplay playsinline class="w-full max-w-md rounded shadow-sm mb-3 bg-black border-2 border-gray-600"></video>
+                    <div class="flex gap-3">
+                        <button onclick="capturarFoto()" class="bg-green-500 hover:bg-green-400 text-white font-bold py-2 px-6 rounded shadow transition-colors">
+                            📸 Capturar
+                        </button>
+                        <button onclick="cerrarCamara()" class="bg-red-500 hover:bg-red-400 text-white font-bold py-2 px-6 rounded shadow transition-colors">
+                            ❌ Cancelar
+                        </button>
+                    </div>
+                    <canvas id="canvasWebcam" class="hidden"></canvas>
+                </div>
+                
+                <div id="resultadoBox" class="hidden rounded shadow-sm p-4 border-l-4">
+                    <h3 id="resultadoTitulo" class="font-bold mb-2"></h3>
+                    <div id="resultadoContenido" class="text-sm"></div>
+                </div>
+            </div>
+
+        <div class="flex flex-col md:flex-row gap-6">
+            
+            <div class="flex-1">
+                <div id="mosaicoFotosDetalladas" class="hidden grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-4 bg-gray-100 rounded-lg shadow-inner min-h-[400px]">
+                    </div>
+            </div>
+
+            <div class="w-full md:w-80 shrink-0 bg-white rounded-lg shadow-md p-5 h-fit sticky top-4">
+                <h3 class="font-bold text-gray-800 mb-4 border-b pb-2">Historial de Consultas</h3>
+                <ul id="historialLista" class="space-y-3 text-xs font-mono">
+                    </ul>
+            </div>
+            
+        </div>
+    </div>
+
+<script>
+    // ==========================================
+    // --- COLA GLOBAL DE ARCHIVOS ---
+    // ==========================================
+    const colaArchivos = new DataTransfer();
+
+    function acumularArchivos(event) {
+        const nuevosArchivos = event.target.files;
+        
+        // Recorremos las fotos recién seleccionadas
+        for (let i = 0; i < nuevosArchivos.length; i++) {
+            const archivoNuevo = nuevosArchivos[i];
+            
+            // Verificamos que no estemos metiendo la misma foto dos veces (por nombre)
+            let esDuplicado = false;
+            for (let j = 0; j < colaArchivos.items.length; j++) {
+                if (colaArchivos.files[j].name === archivoNuevo.name) {
+                    esDuplicado = true;
+                    break;
+                }
+            }
+            
+            // Si no es repetida, la sumamos al carrito
+            if (!esDuplicado) {
+                colaArchivos.items.add(archivoNuevo);
+            }
+        }
+        
+        // Forzamos al input a que muestre TODOS los archivos acumulados
+        event.target.files = colaArchivos.files;
+    }
+
+    function limpiarCola() {
+        // Vaciamos el carrito global
+        colaArchivos.items.clear();
+        // Vaciamos el input visual
+        document.getElementById('fileInput').value = "";
+        alert("Cola de fotos vaciada 🗑️");
+    }
+    async function validarConsulta() {
+        const query = document.getElementById('queryInput').value;
+        const fileInput = document.querySelector('input[type="file"]');
+        
+        if (!query) return;
+
+        try {
+            // 1. Preguntarle a Go si la sintaxis es válida
+            const goResponse = await fetch('/api/validate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: query })
+            });
+            const goData = await goResponse.json();
+            
+            mostrarResultado(query, goData);
+            agregarAHistorial(query, goData.isValid);
+
+            // Ocultar el mosaico anterior si existía
+            const mosaico = document.getElementById('mosaicoFotosDetalladas');
+            if (mosaico) mosaico.classList.add('hidden');
+
+            // 2. Si es inválida o no hay fotos, terminamos.
+            if (!goData.isValid || !fileInput.files || fileInput.files.length === 0) {
+                return; 
+            }
+
+            const totalArchivos = fileInput.files.length;
+            document.getElementById('resultadoContenido').innerHTML += `<br><br><span class="text-blue-600 font-bold">⏳ Analizando ${totalArchivos} foto(s) con IA... esto puede tardar un poco.</span>`;
+            
+            let resultadosFrontEnd = []; 
+            let totalMatches = 0;
+            let totalCarasEncontradas = 0;
+
+            // 3. Procesar CADA archivo seleccionado
+            for (let i = 0; i < totalArchivos; i++) {
+                const formData = new FormData();
+                formData.append('file', fileInput.files[i]);
+
+                try {
+                    const pyResponse = await fetch('http://localhost:8001/api/detect', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const pyData = await pyResponse.json();
+
+                    if (pyData.status === "success") {
+                        totalCarasEncontradas += pyData.faces_count;
+                        
+                        let photoResult = {
+                            name: fileInput.files[i].name,
+                            url: pyData.img_url, 
+                            faces: []
+                        };
+
+                        pyData.faces.forEach((face, index) => {
+                            // Evaluar la cara contra las condiciones de Go
+                            const meets = evaluarCondiciones(face, goData.conditions);
+                            if (meets) totalMatches++;
+
+                            // Guardar los datos de cada cara
+                            photoResult.faces.push({
+                                ...face,
+                                meetsCondition: meets,
+                                faceId: index
+                            });
+                        });
+
+                        resultadosFrontEnd.push(photoResult);
+                    }
+                } catch (err) {
+                    console.error("Error al procesar la foto", fileInput.files[i].name, err);
+                }
+            }
+
+            // 4. Mostrar el conteo total final
+            document.getElementById('resultadoContenido').innerHTML += `<br><br><strong>🧠 Resultado Total de IA:</strong> Se analizaron ${totalArchivos} fotos y se detectaron ${totalCarasEncontradas} caras.<br>🎯 <strong class="text-green-700 text-lg">${totalMatches}</strong> cumplen tu consulta.`;
+
+            // 5. Dibujar el mosaico de fotos
+            if (mosaico) mostrarResultadosDetallados(resultadosFrontEnd);
+
+            // 6. Avisarle a Go que actualice la BD
+            await fetch('/api/update_matches', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: goData.queryId, matches_count: totalMatches })
+            });
+
+        } catch (error) {
+            console.error('Error general:', error);
+        }
+    }
+
+    // --- FUNCIÓN PARA CONSTRUIR EL MOSAICO ---
+    function mostrarResultadosDetallados(results) {
+        const container = document.getElementById('mosaicoFotosDetalladas');
+        if (!container) return;
+
+        container.innerHTML = ''; 
+        container.classList.remove('hidden');
+
+        results.forEach(photo => {
+            const photoCard = document.createElement('div');
+            photoCard.className = 'border border-gray-200 rounded p-3 bg-white shadow-sm transition-all';
+
+            // Opacar y poner en blanco y negro si no hay matches
+            const hasMatches = photo.faces.some(face => face.meetsCondition);
+            if (!hasMatches) {
+                photoCard.classList.add('opacity-40', 'grayscale');
+            }
+
+            // Imagen
+            const imgEl = document.createElement('img');
+            imgEl.src = photo.url; 
+            imgEl.alt = photo.name;
+            imgEl.className = 'w-full aspect-square object-cover rounded mb-3';
+            photoCard.appendChild(imgEl);
+
+            // Contenedor de datos
+            const dataContainer = document.createElement('div');
+            dataContainer.className = 'space-y-2 text-xs text-gray-700 font-mono';
+            
+            if (photo.faces.length === 0) {
+                 dataContainer.innerHTML = `<span class="italic text-gray-400">Sin rostros detectados</span>`;
+            } else {
+                photo.faces.forEach(face => {
+                    const faceBlock = document.createElement('div');
+                    faceBlock.className = 'p-1.5 rounded bg-gray-50 border border-gray-100';
+                    
+                    // Resaltar en verde si cumplió la condición
+                    if (face.meetsCondition) {
+                        faceBlock.classList.remove('bg-gray-50', 'border-gray-100');
+                        faceBlock.classList.add('bg-green-100', 'border-green-300', 'text-green-800', 'font-bold');
+                    }
+                    
+                    // Formato: G.M o G.F para ahorrar espacio
+                    const gen = face.gender === 'male' ? 'M' : 'F';
+                    
+                    // --- NUEVO: Mostrar texto o emoji si trae lentes ---
+                    const lentesTxt = face.glasses ? '👓 Sí' : 'No';
+                    
+                    faceBlock.innerHTML = `👦 Cara ${face.faceId+1}<br>Ed: ${face.age} | G: ${gen} | Em: ${face.emotion}<br>Lentes: ${lentesTxt}`;
+                    dataContainer.appendChild(faceBlock);
+                });
+            }
+            
+            photoCard.appendChild(dataContainer);
+            container.appendChild(photoCard);
+        });
+    }
+
+    // --- EL INTÉRPRETE DE CONDICIONES ---
+    function evaluarCondiciones(face, conditions) {
+        if (!conditions || conditions.length === 0) return true;
+
+        for (let cond of conditions) {
+            let parts = cond.split(/(>=|<=|>|<|=)/); 
+            if (parts.length < 3) continue;
+            let field = parts[0].trim();
+            let op = parts[1].trim();
+            let expectedVal = parts[2].trim().replace(/['"]/g, ''); 
+            let faceVal = face[field];
+            
+            if (op === '>' && !(faceVal > parseFloat(expectedVal))) return false;
+            if (op === '<' && !(faceVal < parseFloat(expectedVal))) return false;
+            if (op === '>=' && !(faceVal >= parseFloat(expectedVal))) return false;
+            if (op === '<=' && !(faceVal <= parseFloat(expectedVal))) return false;
+            if (op === '=' && String(faceVal) !== String(expectedVal)) return false;
+        }
+        return true; 
+    }
+
+    // --- UI Y MENSAJES ---
+    function mostrarResultado(query, data) {
+        const box = document.getElementById('resultadoBox');
+        const titulo = document.getElementById('resultadoTitulo');
+        const contenido = document.getElementById('resultadoContenido');
+        
+        box.classList.remove('hidden', 'bg-green-100', 'border-green-500', 'text-green-800', 'bg-red-100', 'border-red-500', 'text-red-800');
+
+        if (data.isValid) {
+            box.classList.add('bg-green-100', 'border-green-500', 'text-green-800');
+            titulo.innerHTML = '✅ Consulta válida';
+            contenido.innerHTML = `<strong>Condiciones parseadas:</strong><br> - ${data.conditions.join('<br> - ')}`;
+        } else {
+            box.classList.add('bg-red-100', 'border-red-500', 'text-red-800');
+            titulo.innerHTML = '❌ Error en la consulta';
+            
+            let errorHtml = data.semanticError || data.syntaxError;
+            if (data.semanticError && data.validFields) {
+                errorHtml += `<br><br><strong>Campos válidos:</strong> ${data.validFields.join(', ')}`;
+            }
+            contenido.innerHTML = errorHtml;
+        }
+    }
+
+    function agregarAHistorial(query, isValid) {
+        const lista = document.getElementById('historialLista');
+        const icon = isValid ? '✅' : '❌';
+        const color = isValid ? 'text-green-600' : 'text-red-600';
+        
+        const li = document.createElement('li');
+        li.className = 'flex items-start gap-2 border-b pb-2 border-gray-100';
+        li.innerHTML = `<span class="${color}">${icon}</span> <span class="break-all">${query}</span>`;
+        lista.insertBefore(li, lista.firstChild);
+    }
+    // ==========================================
+    // --- LÓGICA DE LA CÁMARA WEB ---
+    // ==========================================
+    let streamCamara = null;
+
+    async function abrirCamara() {
+        const contenedor = document.getElementById('camaraContainer');
+        const video = document.getElementById('videoWebcam');
+        
+        try {
+            // Pedir permiso al navegador para usar el video
+            streamCamara = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = streamCamara;
+            contenedor.classList.remove('hidden');
+        } catch (err) {
+            alert("No se pudo acceder a la cámara. Asegúrate de darle permisos al navegador.");
+            console.error(err);
+        }
+    }
+
+    function cerrarCamara() {
+        if (streamCamara) {
+            // Apagar el foquito de la cámara
+            streamCamara.getTracks().forEach(track => track.stop());
+        }
+        document.getElementById('camaraContainer').classList.add('hidden');
+    }
+
+    function capturarFoto() {
+        const video = document.getElementById('videoWebcam');
+        const canvas = document.getElementById('canvasWebcam');
+        const fileInput = document.querySelector('input[type="file"]'); // Usar el selector original por si acaso
+
+        // Dibujar el frame actual del video como si fuera una pintura en el canvas
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+
+        // Convertir esa pintura a un archivo JPG real
+        canvas.toBlob((blob) => {
+            const file = new File([blob], `captura_camara_${Date.now()}.jpg`, { type: "image/jpeg" });
+            
+            // Truco de magia oscura de JS: Usar DataTransfer para agregar la foto al input type="file"
+            // sin borrar los archivos que el usuario ya había subido a mano.
+            const dt = new DataTransfer();
+            if (fileInput.files) {
+                for (let i = 0; i < fileInput.files.length; i++) {
+                    dt.items.add(fileInput.files[i]);
+                }
+            }
+            dt.items.add(file);
+            fileInput.files = dt.files;
+
+            alert('¡Foto capturada y agregada a la cola de archivos! 📸');
+            cerrarCamara();
+        }, 'image/jpeg');
+    }
+</script>

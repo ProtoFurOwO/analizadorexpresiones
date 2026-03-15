@@ -1,0 +1,22 @@
+# Entornos virtuales de Python
+.venv/
+venv/
+env/
+
+# Modelos pesados de la IA (¡SÚPER IMPORTANTE!)
+.deepface/
+
+# Caché y temporales de Python
+__pycache__/
+*.pyc
+
+# Archivos compilados de Go
+*.exe
+*.exe~
+
+# Variables de entorno (buenas prácticas)
+.env
+
+# Basura de Windows/Mac
+.DS_Store
+Thumbs.db

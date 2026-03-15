@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: compiladores_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: josean
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: compiladores_db
+    ports:
+      - "5432:5432"
+    volumes:
+      # Este volumen le dice a Docker: "Ejecuta este SQL apenas arranques"
+      - ./db_init/init.sql:/docker-entrypoint-initdb.d/init.sql
